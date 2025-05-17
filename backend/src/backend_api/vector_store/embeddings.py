@@ -1,8 +1,6 @@
 """OpenAI embeddings service."""
 from typing import List
-import openai
-from langchain.embeddings import OpenAIEmbeddings
-import numpy as np
+from langchain_openai import OpenAIEmbeddings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,7 +17,6 @@ class EmbeddingsService:
         """
         self.embeddings = OpenAIEmbeddings(
             model=model,
-            dimensions=1536,  # Dimensionality of text-embedding-3-small
             show_progress_bar=True
         )
         logger.info(f"Initialized embeddings service with model {model}")
@@ -39,7 +36,7 @@ class EmbeddingsService:
             embeddings = await self.embeddings.aembed_documents(texts)
             
             # Convert to native Python lists for ChromaDB
-            return [embedding.tolist() for embedding in embeddings]
+            return embeddings
 
         except Exception as e:
             logger.error(f"Error generating embeddings: {str(e)}")
@@ -60,7 +57,7 @@ class EmbeddingsService:
             embedding = await self.embeddings.aembed_query(text)
             
             # Convert to native Python list for ChromaDB
-            return embedding.tolist()
+            return embedding
 
         except Exception as e:
             logger.error(f"Error generating query embedding: {str(e)}")

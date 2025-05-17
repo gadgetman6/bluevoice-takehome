@@ -1,4 +1,5 @@
 """Vector store implementation using ChromaDB with OpenAI embeddings."""
+
 from typing import List, Dict, Any, Optional
 import chromadb
 from chromadb.config import Settings
@@ -9,6 +10,7 @@ from .embeddings import EmbeddingsService
 
 logger = logging.getLogger(__name__)
 
+
 class VectorStore:
     """Vector store for document chunks using ChromaDB with OpenAI embeddings."""
 
@@ -16,7 +18,7 @@ class VectorStore:
         self,
         persist_dir: str = "./data/chroma",
         collection_name: str = "documents",
-        embedding_model: str = "text-embedding-3-small"
+        embedding_model: str = "text-embedding-3-small",
     ):
         """
         Initialize the vector store.
@@ -28,32 +30,24 @@ class VectorStore:
         """
         self.persist_dir = Path(persist_dir)
         self.persist_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Initialize embeddings service
         self.embeddings = EmbeddingsService(model=embedding_model)
-        
+
         # Initialize ChromaDB client
         self.client = chromadb.PersistentClient(
             path=str(self.persist_dir),
-            settings=Settings(
-                anonymized_telemetry=False,
-                allow_reset=True
-            )
+            settings=Settings(anonymized_telemetry=False, allow_reset=True),
         )
 
         # Get or create collection
         self.collection = self.client.get_or_create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "cosine"}
+            name=collection_name, metadata={"hnsw:space": "cosine"}
         )
 
         logger.info(f"Initialized vector store at {persist_dir} with {embedding_model}")
 
-    async def add_chunks(
-        self,
-        document_id: str,
-        chunks: List[Dict[str, Any]]
-    ) -> None:
+    async def add_chunks(self, document_id: str, chunks: List[Dict[str, Any]]) -> None:
         """
         Add document chunks to the vector store.
 
@@ -63,19 +57,22 @@ class VectorStore:
         """
         try:
             # Extract texts and metadata
-            texts = [chunk['content'] for chunk in chunks]
-            metadatas = [chunk['metadata'] for chunk in chunks]
+            texts = [chunk["content"] for chunk in chunks]
+            raw_metadatas = [chunk["metadata"] for chunk in chunks]
             ids = [f"{document_id}_{i}" for i in range(len(chunks))]
+
+            # Inject id into metadata (e.g., for filtering later)
+            metadatas = [
+                {**metadata, "doc_id": document_id}
+                for metadata in raw_metadatas
+            ]
 
             # Generate embeddings using OpenAI
             embeddings = await self.embeddings.get_embeddings(texts)
 
-            # Add to collection with embeddings
+            # Add to collection
             self.collection.add(
-                embeddings=embeddings,
-                documents=texts,
-                metadatas=metadatas,
-                ids=ids
+                embeddings=embeddings, documents=texts, metadatas=metadatas, ids=ids
             )
 
             logger.info(f"Added {len(chunks)} chunks for document {document_id}")
@@ -85,10 +82,7 @@ class VectorStore:
             raise
 
     async def search(
-        self,
-        query: str,
-        document_id: Optional[str] = None,
-        limit: int = 3
+        self, query: str, document_id: Optional[str] = None, limit: int = 10
     ) -> List[Dict[str, Any]]:
         """
         Search for relevant document chunks.
@@ -106,27 +100,30 @@ class VectorStore:
             query_embedding = await self.embeddings.get_query_embedding(query)
 
             # Prepare where clause if document_id is provided
-            where = {"source": {"$contains": document_id}} if document_id else None
+            where = {"doc_id": document_id if document_id else None}
 
             # Query the collection using the embedding
             results = self.collection.query(
                 query_embeddings=[query_embedding],
                 n_results=limit,
-                where=where,
-                include=["documents", "metadatas", "distances"]
+                where=where,  # Filter by document_id if provided
+                include=["documents", "metadatas", "distances"],
             )
 
             # Format results
             chunks = []
-            for i in range(len(results['ids'][0])):
-                chunks.append({
-                    'content': results['documents'][0][i],
-                    'metadata': results['metadatas'][0][i],
-                    'similarity': 1 - results['distances'][0][i]  # Convert distance to similarity
-                })
+            for i in range(len(results["ids"][0])):
+                chunks.append(
+                    {
+                        "content": results["documents"][0][i],
+                        "metadata": results["metadatas"][0][i],
+                        "similarity": 1
+                        - results["distances"][0][i],  # Convert distance to similarity
+                    }
+                )
 
             # Sort by similarity (highest first)
-            chunks.sort(key=lambda x: x['similarity'], reverse=True)
+            chunks.sort(key=lambda x: x["similarity"], reverse=True)
 
             return chunks
 
