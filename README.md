@@ -37,7 +37,7 @@ gcloud auth application-default login
 
 1. Start the server:
 ```bash
-poetry run uvicorn backend.src.api.app:app --reload
+poetry run uvicorn backend.src.backend_api.api.app:app --reload
 ```
 
 2. Upload a document:

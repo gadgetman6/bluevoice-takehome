@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SSE demo (header-based client_id)</title>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; }
+    #answer { white-space: pre-wrap; border: 1px solid #ccc; padding: 1rem; min-height: 6rem; }
+  </style>
+</head>
+<body>
+  <h2>LLM chat + document upload</h2>
+
+  <!-- CHAT -->
+  <label>Query:
+    <input id="q" size="45" placeholder="ask a question" />
+  </label>
+  <label>Document ID:
+    <input id="docId" size="45" placeholder="document ID" />
+  </label>
+  <button id="chatBtn">Send chat</button>
+
+  <!-- UPLOAD -->
+  <p>
+    <input type="file" id="pdf" accept="application/pdf" />
+    <button id="upBtn">Upload PDF</button>
+  </p>
+
+  <h3>Streamed output</h3>
+  <div id="answer"></div>
+
+<script type="module">
+import { v4 as uuidv4 } from 'https://jspm.dev/uuid';
+
+const clientId = uuidv4();               // one ID per tab
+const out      = document.getElementById('answer');
+
+/* ---------- SSE connection (uses query param) ---------- */
+const evt = new EventSource(`http://localhost:8000/events/stream?client_id=${clientId}`);
+evt.addEventListener('chat',    e => out.textContent += e.data);
+evt.addEventListener('ready',   e => log('doc ready',    e.data));
+evt.addEventListener('indexed', e => log('doc indexed',  e.data));
+evt.addEventListener('error',   e => log('server error', e.data));
+evt.addEventListener('ping',    () => {});              // heartbeat
+
+function log(label, data) {
+  console.log(`${label}:`, data);
+}
+
+/* ---------- helpers ---------- */
+async function postJSON(url, body) {
+  return fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Client-Id':  clientId,       //  ←  custom header
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+/* ---------- chat ---------- */
+document.getElementById('chatBtn').onclick = () => {
+  postJSON('http://localhost:8000/chat', {
+    query:       document.getElementById('q').value,
+    document_id: document.getElementById('docId').value, 
+  });
+};
+
+/* ---------- upload PDF ---------- */
+document.getElementById('upBtn').onclick = async () => {
+  const fileInput = document.getElementById('pdf');
+  if (!fileInput.files.length) return alert('choose a PDF first');
+
+  const form = new FormData();
+  form.append('file', fileInput.files[0]);
+
+  await fetch(`http://localhost:8000/documents/upload`, {
+    method: 'POST',
+    headers: { 'X-Client-Id': clientId },  //  ←  custom header
+    body: form,
+  });
+};
+</script>
+</body>
+</html>

@@ -104,8 +104,6 @@ class DocumentProcessor:
                     for chunk in page_chunks
                 ])
 
-            doc.close()
-
             return {
                 'document_id': document_id,
                 'chunks': chunks,

@@ -1,15 +1,38 @@
 """FastAPI application for document Q&A."""
-from fastapi import FastAPI, UploadFile, HTTPException
+
+import asyncio
+import uuid
+from backend_api.api.events.bus import EventBus
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    Header,
+    Request,
+    UploadFile,
+    HTTPException,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
 import os
 from dotenv import load_dotenv
 import logging
 
+from sse_starlette import EventSourceResponse
+
 from ..document_processor.processor import DocumentProcessor
 from ..vector_store.store import VectorStore
 from ..llm_service.service import LLMService
+from pydantic import BaseModel
 from ..llm_service.models import ChatResponse
+
+
+class ChatRequest(BaseModel):
+    """Chat request model."""
+
+    query: str
+    document_id: str
+
 
 # Load environment variables
 load_dotenv()
@@ -32,81 +55,141 @@ app.add_middleware(
 # Initialize services
 processor = DocumentProcessor()
 vector_store = VectorStore()
-llm_service = LLMService(
-    project_id=os.getenv("GOOGLE_CLOUD_PROJECT"),
-    location="us-west1"  # Using us-west1 for lower latency
-)
+llm_service = LLMService()
+
+
+async def get_client_id(x_client_id: str = Header(None)):
+    if not x_client_id:
+        raise HTTPException(400, "X-Client-Id header required")
+    return x_client_id
+
+
+async def _vectorize_and_store(
+    doc_id: str,
+    chunks: list[dict],
+    client_id: str,
+):
+    """Embed chunks and add them to the vector DB; push SSE when done."""
+    try:
+        await vector_store.add_chunks(doc_id, chunks)  # <-- long step
+        await EventBus.push(
+            client_id,
+            "indexed",
+            {
+                "document_id": doc_id,
+                "status": "complete",
+            },
+        )
+    except Exception as exc:
+        logger.exception("vectorization failed")
+        await EventBus.push(client_id, "error", f"vectorize: {exc}")
+
 
 @app.post("/documents/upload")
-async def upload_document(file: UploadFile) -> Dict[str, Any]:
-    """
-    Upload and process a document.
-
-    Args:
-        file: PDF document to process
-
-    Returns:
-        Document ID and metadata
-    """
+async def upload_document(
+    file: UploadFile,
+    background_tasks: BackgroundTasks,  # ← inject FastAPI helper
+    client_id: str = Depends(get_client_id),
+):
+    temp_path = f"temp_{uuid.uuid4()}_{file.filename}"
     try:
-        # Save uploaded file temporarily
-        temp_path = f"temp_{file.filename}"
+        # 1) save upload to disk
         with open(temp_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
+            f.write(await file.read())
 
-        # Process document
+        # 2) parse / chunk (you await this so you can push 'ready')
         result = await processor.process_document(temp_path)
-        
-        # Store chunks in vector store
-        await vector_store.add_chunks(
-            result["document_id"],
-            result["chunks"]
+
+        await EventBus.push(
+            client_id,
+            "ready",
+            {
+                "document_id": result["document_id"],
+                "metadata": result["metadata"],
+            },
         )
 
-        # Cleanup temp file
-        os.remove(temp_path)
+        # 3) schedule the heavy vector step *after* response is sent
+        background_tasks.add_task(
+            _vectorize_and_store,
+            result["document_id"],
+            result["chunks"],
+            client_id,
+        )
 
-        return {
-            "document_id": result["document_id"],
-            "metadata": result["metadata"]
-        }
+        return {"status": "processing"}  # POST returns immediately
 
-    except Exception as e:
-        logger.error(f"Error processing document: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.exception("upload failed")
+        await EventBus.push(client_id, "error", str(exc))
+        raise HTTPException(500, "upload failed")
 
-@app.post("/chat", response_model=ChatResponse)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+@app.post("/chat")
 async def chat(
-    query: str,
-    document_id: str
-) -> ChatResponse:
+    body: ChatRequest,
+    background_tasks: BackgroundTasks,
+    client_id: str = Depends(get_client_id),
+):
+    chunks = await vector_store.search(body.query, body.document_id)
+
+    async def push_tokens():
+        try:
+            async for token in llm_service.stream_answer(body.query, chunks):
+                await EventBus.push(client_id, "chat", token)
+        except Exception as exc:
+            await EventBus.push(client_id, "error", str(exc))
+
+    # run in background so /chat returns 202 immediately
+    background_tasks.add_task(push_tokens)
+    return {"status": "generating"}
+
+
+@app.get("/events/stream")
+async def stream_events(client_id: str, request: Request):
     """
-    Chat with a document.
-
-    Args:
-        query: User's question
-        document_id: ID of the document to query
-
-    Returns:
-        Structured response with answer and metadata
+    Long-lived SSE connection. Client supplies clientId query parameter.
     """
-    try:
-        # Get relevant chunks from vector store
-        chunks = await vector_store.search(query, document_id)
+    print(f"client_id: {client_id}")
+    queue = EventBus.queue(client_id)
 
-        if not chunks:
-            raise HTTPException(
-                status_code=404,
-                detail="No relevant content found"
-            )
+    async def event_gen():
+        # kick off a heartbeat every 15 s so proxies don't close the pipe
+        async def heartbeat():
+            while True:
+                await asyncio.sleep(15)
+                await queue.put({"event": "ping", "data": ""})
 
-        # Generate response
-        response = await llm_service.generate_response(query, chunks)
-        
-        # Validate response with Pydantic model
-        return ChatResponse(**response)
+        hb_task = asyncio.create_task(heartbeat())
 
-    except Exception as e:
-        logger.error(f"Error generating response: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                payload = await queue.get()
+                yield payload
+        finally:
+            hb_task.cancel()
+
+    return EventSourceResponse(event_gen())
+
+
+@app.get("/chat/stream")
+async def chat_stream(request: Request, query: str, document_id: str):
+    chunks = await vector_store.search(query, document_id)
+
+    if not chunks:
+        raise HTTPException(status_code=404, detail="No relevant content found")
+
+    async def event_gen():
+        async for chunk in llm_service.stream_answer(query, chunks):
+            if await request.is_disconnected():
+                break
+            # Each yield is one SSE "data:" event
+            yield {"data": chunk}
+
+    return EventSourceResponse(event_gen())

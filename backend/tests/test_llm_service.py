@@ -4,8 +4,8 @@ from unittest.mock import Mock, patch
 import json
 from datetime import datetime
 
-from ..src.llm_service.service import LLMService
-from ..src.llm_service.models import ChatResponse
+from ..src.backend_api.llm_service.service import LLMService
+from ..src.backend_api.llm_service.models import ChatResponse
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def mock_generative_model():
 def llm_service(mock_vertex_ai, mock_generative_model):
     """Create LLM service with mocked dependencies."""
     return LLMService(
-        project_id="test-project",
+        api_key="test-api-key",
         location="us-west1"
     )
 
