@@ -2,9 +2,9 @@
 import pytest
 from pathlib import Path
 import tempfile
-import fitz  # PyMuPDF
+import pymupdf  # PyMuPDF
 
-from ..src.backend_api.document_processor.processor import DocumentProcessor
+from backend.src.backend_api.document_processor.processor import DocumentProcessor
 
 @pytest.fixture
 def processor():
@@ -16,13 +16,20 @@ def sample_pdf():
     """Create a sample PDF file for testing."""
     with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
         # Create a new PDF with PyMuPDF
-        doc = fitz.open()
+        doc = pymupdf.open()
         page = doc.new_page()
         
         # Add some test content
         page.insert_text(
             (50, 50),
-            "This is a test document.\nIt contains multiple lines of text.\n" * 5,
+            "This is a test document.\nIt contains multiple lines of text.\n" * 100,
+            fontsize=11
+        )
+
+        page2 = doc.new_page()
+        page2.insert_text(
+            (50, 200),
+            "This is the second page.\nIt also contains multiple lines of text.\n" * 100,
             fontsize=11
         )
         
@@ -47,7 +54,7 @@ async def test_process_document(processor, sample_pdf):
     
     # Check metadata
     assert result["metadata"]["filename"] == Path(sample_pdf).name
-    assert result["metadata"]["total_pages"] == 1
+    assert result["metadata"]["total_pages"] == 2
     assert result["metadata"]["total_chunks"] > 0
     
     # Check chunks
@@ -56,7 +63,6 @@ async def test_process_document(processor, sample_pdf):
         assert "content" in chunk
         assert "metadata" in chunk
         assert "page" in chunk["metadata"]
-        assert chunk["metadata"]["page"] == 1
 
 async def test_process_nonexistent_file(processor):
     """Test handling of nonexistent files."""
@@ -82,7 +88,7 @@ async def test_chunk_size_and_overlap(processor, sample_pdf):
     
     # Process with smaller chunk size
     small_processor = DocumentProcessor(chunk_size=500, chunk_overlap=100)
-    small_result = await processor.process_document(sample_pdf)
+    small_result = await small_processor.process_document(sample_pdf)
     small_chunks = len(small_result["chunks"])
     
     # Smaller chunks should result in more chunks

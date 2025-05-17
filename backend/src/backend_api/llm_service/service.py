@@ -83,59 +83,6 @@ class LLMService:
 
         return prompt
 
-    async def generate_response(
-        self, query: str, context_chunks: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """
-        Generate a response in JSON format.
-
-        Args:
-            query: User's question
-            context_chunks: Relevant document chunks
-
-        Returns:
-            Response in JSON format with answer and metadata
-
-        Note: Uses carefully tuned parameters for optimal document Q&A:
-        - temperature=0.1: Low temperature for focused, factual responses
-        - top_p=0.8: Narrower nucleus sampling keeps responses on-topic
-        - candidate_count=1: Single best response for lower latency
-        - frequency_penalty=0.1: Slight penalty to reduce repetition
-        - presence_penalty=0.0: No push for new topics in factual Q&A
-        """
-        try:
-            # Build prompt
-            prompt = self._build_prompt(query, context_chunks)
-
-            # Generate response
-            response = self.model.generate_content(
-                prompt,
-                generation_config=GenerationConfig(
-                    temperature=0.1,  # low randomness → factual, still natural
-                    top_p=0.8,  # narrower nucleus keeps it on-topic
-                    candidate_count=1,  # single best hypothesis keeps latency low
-                    frequency_penalty=0.1,
-                    presence_penalty=0.0,  # no push for new topics
-                    max_output_tokens=1024,  # plenty for an answer + citations
-                    stop_sequences=[
-                        "\n\nContext:"
-                    ],  # cuts off if model tries to spill prompt
-                ),
-                stream=True,
-            )
-
-            # Parse and validate JSON response
-            try:
-                result = json.loads(response.text)
-                return result
-            except json.JSONDecodeError:
-                logger.error("Failed to parse LLM response as JSON")
-                return {"answer": response.text, "source_pages": [], "confidence": 0.0}
-
-        except Exception as e:
-            logger.error(f"Error generating response: {str(e)}")
-            raise
-
     async def stream_answer(
         self, query: str, context_chunks: list[dict]
     ) -> AsyncGenerator[str, None]:
@@ -164,6 +111,8 @@ class LLMService:
 
         buf, inside_answer, checked_conf = "", False, False
 
+        full_json = ""
+
         for chunk in responses:
             # ----- pull the delta text out of the chunk -----
             delta = "".join(
@@ -173,6 +122,7 @@ class LLMService:
                 if hasattr(part, "text")
             )
             buf += delta
+            full_json += delta
 
             # ── 1. early confidence check ──────────────────
             if not checked_conf and '"confidence"' in buf:
@@ -204,6 +154,6 @@ class LLMService:
                     buf = ""
 
         # ── 3. send trailing metadata (pages + conf) ──────
-        if buf.strip():
-            meta = json.loads(buf)
-            yield f"\n\n(pages: {meta['source_pages']}, conf: {meta['confidence']})"
+        print('full_json:', full_json)
+        meta = json.loads(full_json)
+        yield f"\n\nSource pages: {meta['source_pages']}, Confidence: {meta['confidence']})"

@@ -1,6 +1,6 @@
 """Document processing module for handling PDF documents."""
 import re
-from typing import List, Dict, Any
+from typing import Dict, Any
 import unicodedata
 import pymupdf  # PyMuPDF
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -120,26 +120,3 @@ class DocumentProcessor:
         except Exception as e:
             logger.error(f"Error processing document: {str(e)}")
             raise
-
-    def get_relevant_chunks(
-        self,
-        document_id: str,
-        query: str,
-        k: int = 3
-    ) -> List[Dict[str, Any]]:
-        """
-        Get relevant document chunks for a query.
-
-        Args:
-            document_id: ID of the document
-            query: User's question
-            k: Number of chunks to retrieve
-
-        Returns:
-            List of relevant document chunks
-
-        Note: This is a placeholder. The actual implementation will use
-        the vector store to retrieve relevant chunks.
-        """
-        # TODO: Implement vector store retrieval
-        return []

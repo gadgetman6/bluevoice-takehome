@@ -1,5 +1,4 @@
 """FastAPI application for document Q&A."""
-
 import asyncio
 import uuid
 from backend_api.api.events.bus import EventBus
@@ -13,7 +12,6 @@ from fastapi import (
     HTTPException,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Any
 import os
 from dotenv import load_dotenv
 import logging
@@ -24,7 +22,6 @@ from ..document_processor.processor import DocumentProcessor
 from ..vector_store.store import VectorStore
 from ..llm_service.service import LLMService
 from pydantic import BaseModel
-from ..llm_service.models import ChatResponse
 
 
 class ChatRequest(BaseModel):
@@ -174,22 +171,5 @@ async def stream_events(client_id: str, request: Request):
                 yield payload
         finally:
             hb_task.cancel()
-
-    return EventSourceResponse(event_gen())
-
-
-@app.get("/chat/stream")
-async def chat_stream(request: Request, query: str, document_id: str):
-    chunks = await vector_store.search(query, document_id)
-
-    if not chunks:
-        raise HTTPException(status_code=404, detail="No relevant content found")
-
-    async def event_gen():
-        async for chunk in llm_service.stream_answer(query, chunks):
-            if await request.is_disconnected():
-                break
-            # Each yield is one SSE "data:" event
-            yield {"data": chunk}
 
     return EventSourceResponse(event_gen())

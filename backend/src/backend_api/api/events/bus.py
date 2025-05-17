@@ -3,7 +3,7 @@ from typing import Dict
 
 class EventBus:
     """
-    Give each browser tab (or device) a UUID.  All POST endpoints push
+    Give each device a UUID.  All POST endpoints push
     events into that tab's asyncio.Queue; the SSE endpoint drains it.
     """
     _queues: Dict[str, asyncio.Queue] = {}
