@@ -31,6 +31,9 @@ Prerequisites: [**Poetry**](https://python-poetry.org/docs/)
 - ChromaDB for document vectorization and storage
 - Gemini 2.5 Flash for doc-enhanced chat responses
 
+### Codebase quality
+The backend API is fully typed using Python type hints. When working on production-level code, typing can help make development faster, find bugs easier, and make it much easier to collaborate in a team environment (when different engineers are working on different pieces of the code). IMO untyped code should never be shipped to production unless there's extensive test coverage and every engineer is **fully familiar** with all code. 
+
 ### Approach
 #### Document processing
 - Preprocessing using simple regex string cleanup and normalizing all text as unicode characters
@@ -40,8 +43,6 @@ Prerequisites: [**Poetry**](https://python-poetry.org/docs/)
 While RAG generally works well, it struggles on tasks where context from the entire document is required, e.g. "Summarize the document" (here is where analysis on the entire document could help). However, RAG excels for factual Q&A in structured documents.
 
 I considered simply giving the entire document to a large-context model, such as Gemini 2.5 Pro / Flash as this would be an extremely simple solution to the problem. However, the cost and latency of large-context inference are much higher than embedding the document and retrieving relevant results. Therefore, I decided to move forward with the RAG implementation.
-
-
 
 #### Embeddings and Vector Store
 - For embeddings, I used OpenAI's embeddings model (text-embeddings-small) as it is heavily used across the industry. An alternative model would be the Gemini Vertex embeddings model, or 
@@ -63,4 +64,12 @@ The CLI tool is just a small script that POSTs data to the backend for document 
 ### Backend implementation details
 [Backend Implementation](backend/README.md)
 
-
+### Future considerations
+- Improve standardization of the API, expose shared types between backend APIs and frontend consumers
+- Use `rich` plugin to print prettified output to the terminal, we should be able to print markdown as well.
+- Implement hybrid approach of full context injection + RAG for more accurate results
+- Handle multiple document types, PNGs, videos, etc (the model can already do this, but we would need to explore an embedding strategy if the content is too large)
+- Run evals against multiple models to determine the most **accurate** model (as well as the fastest)
+- Implement the AG-UI protocol for a standard event-driven interface: https://github.com/ag-ui-protocol/ag-ui
+    - UI comes for free with CopilotKit: https://docs.copilotkit.ai/
+- Include chat history as messages for a multi-turn conversation with context
