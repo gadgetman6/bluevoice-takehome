@@ -38,7 +38,7 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-chatbot = "cli.src.commands.main:app"
+chatbot = "cli.src.main:main"
 
 [tool.black]
 line-length = 88
