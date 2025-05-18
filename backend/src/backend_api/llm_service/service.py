@@ -14,6 +14,14 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+END_QUOTE_RE = re.compile(r'(?<!\\)"\s*,')
+
+ANSWER_FIELD_RE = re.compile(
+    r'"answer"\s*:\s*"'  # opening quote
+    r'(?P<ans>(?:[^"\\]|\\.)*?)'  # non-greedy match for answer content
+    r'"\s*,',  # closing quote
+    re.IGNORECASE | re.DOTALL,
+)
 
 class LLMService:
     """Service for generating responses using Gemini."""
@@ -104,7 +112,6 @@ class LLMService:
                 },
                 temperature=0.1,
                 top_p=0.8,
-                max_output_tokens=1024,
             ),
             stream=True,
         )
@@ -140,29 +147,42 @@ class LLMService:
 
             # Extract and stream the answer
             if not inside_answer:
-                m = re.search(r'"answer"\s*:\s*"', buf)
+                # If the entire answer is available, yield it
+                m = ANSWER_FIELD_RE.search(buf)
                 if m:
-                    inside_answer = True
                     yield {
                         "type": "chunk",
-                        "content": buf[m.end() :],
+                        "content": m.group("ans"),
                     }  # text after the opening quote
-                    buf = ""
+                    buf = buf[m.end() :]
+                # Else, if we just see the start of the answer field
+                else:
+                    # If we have a partial answer, yield it
+                    partial_match = re.search(r'"answer"\s*:\s*"', buf)
+                    if partial_match:
+                        inside_answer = True
+                        start = partial_match.end()
+                        yield {
+                            "type": "chunk",
+                            "content": buf[start:],
+                        }
+                        buf = ""
             else:
-                end = buf.find('",')  # end of answer field
-                if end != -1:
+                end_match = END_QUOTE_RE.search(buf)  # end of answer field
+                if end_match:
+                    end = end_match.start()
                     yield {
                         "type": "chunk",
                         "content": buf[:end],
                     }
-                    buf = buf[end + 2 :]  # keep trailing bytes
+                    buf = buf[end:]  # keep trailing bytes
                     inside_answer = False
                 else:
                     yield {
                         "type": "chunk",
-                        "content": buf,
+                        "content": buf[:-1],
                     }
-                    buf = ""
+                    buf = buf[-1:]  # keep trailing bytes
 
         # Attempt to parse the final buffer as JSON
         try:

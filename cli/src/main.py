@@ -21,7 +21,7 @@ BASE_URL   = "http://localhost:8000"
 EVENT_PATH = "/events/stream"
 UPLOAD_URL = "/documents/upload"
 CHAT_URL   = "/chat"
-TIMEOUT    = 15          # seconds to wait for ready / indexed
+TIMEOUT    = 15  # 15 second timeout for requests
 # -----------------------------------------------------------------------
 
 
@@ -30,19 +30,22 @@ def sse_reader(url: str, out_q: queue.Queue):
     Simple blocking SSE client.  Writes dicts {"event": str, "data": str}
     into out_q until the HTTP connection closes.
     """
-    with requests.get(url, stream=True) as resp:
-        event, data = None, []
-        for raw in resp.iter_lines(decode_unicode=True):
-            if raw is None:
-                continue
-            if raw.startswith("event:"):
-                event = raw[6:].strip()
-            elif raw.startswith("data:"):
-                data.append(raw[5:].strip())
-            elif raw == "":            # empty line → dispatch
-                if event:
-                    out_q.put({"event": event, "data": "\n".join(data)})
-                event, data = None, []
+    try:
+        with requests.get(url, stream=True) as resp:
+            event, data = None, []
+            for raw in resp.iter_lines(decode_unicode=True):
+                if raw is None:
+                    continue
+                if raw.startswith("event:"):
+                    event = raw[6:].strip()
+                elif raw.startswith("data:"):
+                    data.append(raw[5:].strip())
+                elif raw == "":            # empty line → dispatch
+                    if event:
+                        out_q.put({"event": event, "data": "\n".join(data)})
+                    event, data = None, []
+    except Exception as e:
+        sys.exit(1)
 
 def _render(chunk: str) -> str:
     """Turn literal \\n into real newlines."""
@@ -63,13 +66,18 @@ def main():
     q = queue.Queue()
     stream_url = f"{BASE_URL}{EVENT_PATH}?client_id={client_id}"
     t = threading.Thread(target=sse_reader, args=(stream_url, q), daemon=True)
-    t.start()
+    try:
+        t.start()
 
-    # 2) upload PDF ------------------------------------------------------
-    with args.pdf.open("rb") as f:
-        files = {"file": (args.pdf.name, f, "application/pdf")}
-        r = requests.post(f"{BASE_URL}{UPLOAD_URL}", headers=headers, files=files)
-        r.raise_for_status()
+        # 2) upload PDF ------------------------------------------------------
+        with args.pdf.open("rb") as f:
+            files = {"file": (args.pdf.name, f, "application/pdf")}
+            r = requests.post(f"{BASE_URL}{UPLOAD_URL}", headers=headers, files=files)
+            r.raise_for_status()
+
+    except Exception as e:
+        print(f"Could not connect to API. Is your server running?")
+        sys.exit(1)
     print(f"Ingested {args.pdf.name}. Waiting for indexing…")
 
     # 3) wait for ready & indexed events --------------------------------
@@ -126,8 +134,16 @@ def main():
     except KeyboardInterrupt:
         pass
 
+    except Exception as e:
+        print(f"\n[system error] {e}")
+        sys.exit(1)
+
     print("\nbye!")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"System Error: {e}")
+        sys.exit(1)
