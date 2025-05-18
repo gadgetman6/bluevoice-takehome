@@ -45,16 +45,8 @@ class LLMService:
         # Initialize Vertex AI with API key
         vertexai.init(location=location)
 
-        # Configure safety settings to handle content appropriately
-        self.safety_settings = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
-        }
-
         # Initialize model with safety settings
-        self.model = GenerativeModel(model_name, safety_settings=self.safety_settings)
+        self.model = GenerativeModel(model_name)
         logger.info(f"Initialized LLM service with model {model_name}")
 
     def _build_prompt(self, query: str, context_chunks: List[Dict[str, Any]]) -> str:
