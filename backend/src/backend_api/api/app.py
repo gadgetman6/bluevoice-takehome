@@ -1,4 +1,5 @@
 """FastAPI application for document Q&A."""
+
 import asyncio
 import uuid
 from backend_api.api.events.bus import EventBus
@@ -106,7 +107,7 @@ async def upload_document(
             },
         )
 
-        # 3) schedule the heavy vector step *after* response is sent
+        # run vectorization in background so we don't block the request
         background_tasks.add_task(
             _vectorize_and_store,
             result["document_id"],
@@ -119,12 +120,11 @@ async def upload_document(
     except Exception as exc:
         logger.exception("upload failed")
         await EventBus.push(client_id, "error", str(exc))
-        raise HTTPException(500, "upload failed")
+        raise HTTPException(500, "Upload failed")
 
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
-
 
 @app.post("/chat")
 async def chat(
@@ -151,25 +151,13 @@ async def stream_events(client_id: str, request: Request):
     """
     Long-lived SSE connection. Client supplies clientId query parameter.
     """
-    print(f"client_id: {client_id}")
     queue = EventBus.queue(client_id)
 
     async def event_gen():
-        # kick off a heartbeat every 15 s so proxies don't close the pipe
-        async def heartbeat():
-            while True:
-                await asyncio.sleep(15)
-                await queue.put({"event": "ping", "data": ""})
+        while True:
+            if await request.is_disconnected():
+                break
+            payload = await queue.get()
+            yield payload
 
-        hb_task = asyncio.create_task(heartbeat())
-
-        try:
-            while True:
-                if await request.is_disconnected():
-                    break
-                payload = await queue.get()
-                yield payload
-        finally:
-            hb_task.cancel()
-
-    return EventSourceResponse(event_gen())
+    return EventSourceResponse(event_gen(), ping=True)

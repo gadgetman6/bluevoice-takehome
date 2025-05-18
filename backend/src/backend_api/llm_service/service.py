@@ -85,8 +85,8 @@ class LLMService:
 
     async def stream_answer(
         self, query: str, context_chunks: list[dict]
-    ) -> AsyncGenerator[str, None]:
-        """Yield answer text chunks; stop early if confidence is low."""
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Yield answer chunks as JSON objects; stop early if confidence is low."""
         prompt = self._build_prompt(query, context_chunks)
 
         responses = self.model.generate_content(
@@ -109,12 +109,13 @@ class LLMService:
             stream=True,
         )
 
-        buf, inside_answer, checked_conf = "", False, False
-
-        full_json = ""
+        buf = ""
+        checked_conf = False
+        inside_answer = False
+        current_answer = ""
 
         for chunk in responses:
-            # ----- pull the delta text out of the chunk -----
+            # Get delta text from chunk
             delta = "".join(
                 part.text
                 for cand in chunk.candidates
@@ -122,38 +123,64 @@ class LLMService:
                 if hasattr(part, "text")
             )
             buf += delta
-            full_json += delta
+            current_answer += delta
 
-            # ── 1. early confidence check ──────────────────
+            # Check the confidence value
             if not checked_conf and '"confidence"' in buf:
                 try:
-                    conf = json.loads(buf + "}")["confidence"]
+                    partial_json = json.loads(buf + "}")
+                    conf = partial_json["confidence"]
                     checked_conf = True
-                    if conf < 0.30:               # your threshold
-                        responses.close()         # stop the server-side stream
-                        yield "[confidence too low]\n"
+                    if conf < 0.30:  # confidence threshold
+                        responses.close()
+                        yield {"type": "error", "content": "Confidence too low"}
                         return
                 except json.JSONDecodeError:
-                    pass                          # not enough yet
+                    pass
 
-            # ── 2. stream the “answer” value to caller ─────
+            # Extract and stream the answer
             if not inside_answer:
                 m = re.search(r'"answer"\s*:\s*"', buf)
                 if m:
                     inside_answer = True
-                    yield buf[m.end():]           # text after the opening quote
+                    yield {
+                        "type": "chunk",
+                        "content": buf[m.end() :],
+                    }  # text after the opening quote
                     buf = ""
             else:
-                end = buf.find('",')              # naive “end of answer” detector
+                end = buf.find('",')  # end of answer field
                 if end != -1:
-                    yield buf[:end]
-                    buf  = buf[end + 2 :]         # keep trailing bytes (meta)
+                    yield {
+                        "type": "chunk",
+                        "content": buf[:end],
+                    }
+                    buf = buf[end + 2 :]  # keep trailing bytes
                     inside_answer = False
                 else:
-                    yield buf
+                    yield {
+                        "type": "chunk",
+                        "content": buf,
+                    }
                     buf = ""
 
-        # ── 3. send trailing metadata (pages + conf) ──────
-        print('full_json:', full_json)
-        meta = json.loads(full_json)
-        yield f"\n\nSource pages: {meta['source_pages']}, Confidence: {meta['confidence']})"
+        # Attempt to parse the final buffer as JSON
+        try:
+            # Attempt to parse the buffer as JSON
+            parsed = json.loads(current_answer)
+        except json.JSONDecodeError:
+            # If parsing fails, try again with a cleaned buffer
+            yield {"type": "error", "content": "Could not get source pages"}
+            return
+
+        # If we have a complete answer, yield final response
+        if all(k in parsed for k in ["answer", "confidence", "source_pages"]):
+            yield {
+                "type": "final",
+                "content": {
+                    "answer": parsed["answer"],
+                    "confidence": parsed["confidence"],
+                    "source_pages": parsed["source_pages"],
+                },
+            }
+            return

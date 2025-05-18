@@ -19,3 +19,4 @@ class EventBus:
             "data": json.dumps(data) if isinstance(data, (dict, list)) else str(data),
         }
         await cls.queue(client_id).put(payload)
+        await asyncio.sleep(0) # Yield control to other tasks

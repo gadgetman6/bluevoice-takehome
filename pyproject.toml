@@ -6,7 +6,7 @@ authors = ["Your Name <your.email@example.com>"]
 readme = "README.md"
 packages = [
     { include = "backend_api", from = "backend/src" },
-    # { include = "cli/src" }
+    { include = "cli/src" }
 ]
 
 [tool.poetry.dependencies]
@@ -23,6 +23,7 @@ google-cloud-aiplatform = "1.93.0"
 python-dotenv = "1.1.0"
 pydantic = "2.11.4"
 sse-starlette = "2.3.5"
+requests = "^2.32.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "8.3.5"
