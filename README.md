@@ -45,7 +45,7 @@ While RAG generally works well, it struggles on tasks where context from the ent
 I considered simply giving the entire document to a large-context model, such as Gemini 2.5 Pro / Flash as this would be an extremely simple solution to the problem. However, the cost and latency of large-context inference are much higher than embedding the document and retrieving relevant results. Therefore, I decided to move forward with the RAG implementation.
 
 #### Embeddings and Vector Store
-- For embeddings, I used OpenAI's embeddings model (text-embeddings-small) as it is heavily used across the industry. An alternative model would be the Gemini Vertex embeddings model, or 
+- For embeddings, I used OpenAI's embeddings model (text-embeddings-small) as it is heavily used across the industry. An alternative model would be the Gemini Vertex embeddings model.
 - For the vector store, I used ChromaDB as it is open source and easy to run locally.
 
 #### LLM Choice
